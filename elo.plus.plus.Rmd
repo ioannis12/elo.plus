@@ -1,0 +1,159 @@
+---
+title: "Kaggle competition: elo vs. the world"
+output: github_document
+date: "2024-04-08"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readr)
+library(dplyr)
+```
+
+
+
+```{r}
+
+seed <- 123
+
+df <- read_csv("https://raw.githubusercontent.com/ioannis12/elo.plus/main/training_data.csv", show_col_types = FALSE)
+
+table(df$Score)/nrow(df)
+
+df$`White Player #` <- make.names(df$`White Player #`)
+df$`Black Player #` <- make.names(df$`Black Player #`)
+
+train  <- df[1:round(0.8*nrow(df)), ]
+test   <- df[round(0.8*nrow(df)):nrow(df), ]
+
+```
+
+
+```{r}
+
+weight <- function(t, tmin = min(train$`Month #`), tmax = max(train$`Month #`)) ((1 + t - tmin)/(1 + tmax - tmin))**2
+
+train$weight <- weight(train$`Month #`)
+
+```
+
+
+```{r}
+
+eta <- function(p, P) ((1 + 0.1*P) / (p + 0.1*P))**0.602
+
+g <- 0.20
+
+l <- 0.77
+
+P <- 10
+
+neighbor_average <- function(wi, rk) sum(wi * rk) / sum(wi)
+
+Ri <- function(ri, eta, w, o_hut, o, lambda, alpha_i, Ni){
+  return(ri - eta*(w*(o_hut - o)*o_hut*(1 - o_hut) + lambda/abs(Ni) * (ri - alpha_i)))
+}
+
+Rj <- function(rj, eta, w, o_hut, o, lambda, alpha_j, Nj){
+  return(rj - eta*(-w*(o_hut - o)*o_hut*(1 - o_hut) + lambda/abs(Nj) * (rj - alpha_j)))
+}
+
+RMSE <- function(o, o_hut) sqrt( 1/length(o) * sum((o_hut - o)**2, na.rm = TRUE))
+```
+
+
+```{r}
+
+all.teams <- levels(as.factor(union(levels(as.factor(df$`White Player #`)),
+                                    levels(as.factor(df$`Black Player #`)))))
+
+ratings <- as.data.frame(table(c(df$`White Player #`, df$`Black Player #`)), 
+                         row.names = all.teams)
+
+names(ratings) <- c('player', 'games')
+
+ratings$rating <- 0
+
+ratings$sum <- 0
+
+ratings$sum_weights <- 0
+
+ratings$neighbor_average <- 0
+
+rmse <- c(0)
+```
+
+
+```{}
+
+for (p in 1:P){  
+  for (idx in 1:dim(train)[1]){
+    homeTeamName <- train$`White Player #`[idx]
+    awayTeamName <- train$`Black Player #`[idx]
+    
+    ratings[homeTeamName,]$sum <- ratings[homeTeamName,]$sum + train$weight[idx] * ratings[awayTeamName,]$rating
+    
+    ratings[homeTeamName,]$sum_weights <- ratings[homeTeamName,]$sum_weights + train$weight[idx]
+    
+    ratings[homeTeamName,]$neighbor_average <- ratings[homeTeamName,]$sum / ratings[homeTeamName,]$sum_weights
+  }
+
+  learning_rate <- eta(p = 1, P = P)
+  
+  for (idx in 1:nrow(train)){
+    homeTeamName <- train$`White Player #`[idx]
+    awayTeamName <- train$`Black Player #`[idx]
+    w <- train$weight[idx]
+    Ni <- ratings[homeTeamName,]$games
+    Nj <- ratings[awayTeamName,]$games
+    o <- train$Score[idx]
+    ri <- ratings[homeTeamName,]$rating
+    rj <- ratings[awayTeamName,]$rating
+    ai <- ratings[homeTeamName,]$neighbor_average
+    aj <- ratings[awayTeamName,]$neighbor_average
+    
+    o_hut <-  1 / (1 + exp(rj - ri - g))
+    
+#    print(o_hut)  
+    
+    ratings[homeTeamName,]$rating <- Ri(ri, learning_rate , w, o_hut, o, l, ai, Ni)
+    
+    ratings[awayTeamName,]$rating <-  Rj(rj, learning_rate , w, o_hut, o, l, aj, Nj)
+    
+    train <- train[sample(1:nrow(train)),] 
+
+  }
+  
+  train$elo  <-  1 / (1 + exp(ratings[train$`Black Player #`,]$rating - ratings[train$`White Player #`,]$rating - g))
+  
+  cat(RMSE(train$Score, train$elo), '\n')
+  
+  # cat(sum(round(1 / (1 + exp(ratings[train$`Black Player #`,]$rating - ratings[train$`White Player #`,]$rating - g))) == train$Score)/nrow(train), '\n')
+  
+  o_hut_test <- 1 / (1 + exp(ratings[test$`Black Player #`,]$rating - ratings[test$`White Player #`,]$rating - g))
+  # # 
+  cat(rmse_new <- RMSE(test$Score, o_hut_test), '\n')
+  # # 
+  # cat(acc_new <- sum(round(o_hut_test) == test$Result, na.rm = TRUE)/nrow(test), '\n')
+  # 
+  rmse <- append(rmse, rmse_new)
+  # # 
+  if(abs(rmse[length(rmse)] - rmse[length(rmse) - 1]) < 0.0001) break 
+  # 
+}
+```
+
+```{r}
+
+test$elo  <-  1 / (1 + exp(ratings[test$`Black Player #`,]$rating - ratings[test$`White Player #`,]$rating - g))
+
+
+sqrt(mean((test$elo - test$Score)**2))
+
+```
+  
