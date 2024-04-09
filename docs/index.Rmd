@@ -1,0 +1,161 @@
+---
+title: 'Kaggle competition: elo vs. the world'
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Load the nesessary libraries and dataset
+
+```{r, results='hide', message=FALSE}
+library(readr)
+library(dplyr)
+
+
+seed <- 123
+
+df <- read_csv("https://raw.githubusercontent.com/ioannis12/elo.plus/main/training_data.csv", show_col_types = FALSE)
+
+round(table(df$Score)/nrow(df), 2)
+
+df$`White Player #` <- make.names(df$`White Player #`)
+df$`Black Player #` <- make.names(df$`Black Player #`)
+
+train  <- df[1:round(0.8*nrow(df)), ]
+test   <- df[round(0.8*nrow(df)):nrow(df), ]
+
+```
+
+### calculate the weigths for every observation
+```{r}
+
+weight <- function(t, tmin = min(train$`Month #`), tmax = max(train$`Month #`)) ((1 + t - tmin)/(1 + tmax - tmin))**2
+
+train$weight <- weight(train$`Month #`)
+
+```
+
+### programm the algorithm functions
+```{r}
+
+eta <- function(p, P) ((1 + 0.1*P) / (p + 0.1*P))**0.602
+
+g <- 0.20
+
+l <- 0.77
+
+P <- 10
+
+neighbor_average <- function(wi, rk) sum(wi * rk) / sum(wi)
+
+Ri <- function(ri, eta, w, o_hut, o, lambda, alpha_i, Ni){
+  return(ri - eta*(w*(o_hut - o)*o_hut*(1 - o_hut) + lambda/abs(Ni) * (ri - alpha_i)))
+}
+
+Rj <- function(rj, eta, w, o_hut, o, lambda, alpha_j, Nj){
+  return(rj - eta*(-w*(o_hut - o)*o_hut*(1 - o_hut) + lambda/abs(Nj) * (rj - alpha_j)))
+}
+
+RMSE <- function(o, o_hut) sqrt( 1/length(o) * sum((o_hut - o)**2, na.rm = TRUE))
+```
+
+### create the ratings dictionary
+```{r}
+
+all.teams <- levels(as.factor(union(levels(as.factor(df$`White Player #`)),
+                                    levels(as.factor(df$`Black Player #`)))))
+
+ratings <- as.data.frame(table(c(df$`White Player #`, df$`Black Player #`)), 
+                         row.names = all.teams)
+
+names(ratings) <- c('player', 'games')
+
+ratings$rating <- 0
+
+ratings$sum <- 0
+
+ratings$sum_weights <- 0
+
+ratings$neighbor_average <- 0
+
+rmse <- c(0)
+```
+
+### the main loop for the model fit
+```{r, eval=FALSE}
+
+for (p in 1:P){  
+  for (idx in 1:dim(train)[1]){
+    white <- train$`White Player #`[idx]
+    black <- train$`Black Player #`[idx]
+    
+    ratings[white,]$sum <- ratings[white,]$sum + train$weight[idx] * ratings[black,]$rating
+    
+    ratings[white,]$sum_weights <- ratings[white,]$sum_weights + train$weight[idx]
+    
+    ratings[white,]$neighbor_average <- ratings[white,]$sum / ratings[white,]$sum_weights
+  }
+
+  learning_rate <- eta(p = 1, P = P)
+  
+  for (idx in 1:nrow(train)){
+    white <- train$`White Player #`[idx]
+    black <- train$`Black Player #`[idx]
+    w <- train$weight[idx]
+    Ni <- ratings[white,]$games
+    Nj <- ratings[black,]$games
+    o <- train$Score[idx]
+    ri <- ratings[white,]$rating
+    rj <- ratings[black,]$rating
+    ai <- ratings[white,]$neighbor_average
+    aj <- ratings[black,]$neighbor_average
+    
+    o_hut <-  1 / (1 + exp(rj - ri - g))
+    
+#    print(o_hut)  
+    
+    ratings[white,]$rating <- Ri(ri, learning_rate , w, o_hut, o, l, ai, Ni)
+    
+    ratings[black,]$rating <-  Rj(rj, learning_rate , w, o_hut, o, l, aj, Nj)
+    
+    train <- train[sample(1:nrow(train)),] 
+
+  }
+  
+  train$elo  <-  1 / (1 + exp(ratings[train$`Black Player #`,]$rating - ratings[train$`White Player #`,]$rating - g))
+  
+  cat(RMSE(train$Score, train$elo), '\n')
+  
+  # cat(sum(round(1 / (1 + exp(ratings[train$`Black Player #`,]$rating - ratings[train$`White Player #`,]$rating - g))) == train$Score)/nrow(train), '\n')
+  
+  o_hut_test <- 1 / (1 + exp(ratings[test$`Black Player #`,]$rating - ratings[test$`White Player #`,]$rating - g))
+  # # 
+  cat(rmse_new <- RMSE(test$Score, o_hut_test), '\n')
+  # # 
+  # cat(acc_new <- sum(round(o_hut_test) == test$Result, na.rm = TRUE)/nrow(test), '\n')
+  # 
+  rmse <- append(rmse, rmse_new)
+  # # 
+  if(abs(rmse[length(rmse)] - rmse[length(rmse) - 1]) < 0.0001) break 
+  # 
+}
+```
+
+### results on test set
+```{r}
+
+test$elo  <-  1 / (1 + exp(ratings[test$`Black Player #`,]$rating - ratings[test$`White Player #`,]$rating - g))
+
+
+sqrt(mean((test$elo - test$Score)**2))
+
+```
+  
