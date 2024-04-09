@@ -4,7 +4,7 @@ date: "`r Sys.Date()`"
 output: 
   html_document:
     theme: cerulean
-    toc: yes
+    toc: no
     toc_float:
       collapsed: true
 ---
@@ -13,7 +13,9 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
 ### Load the nesessary libraries and dataset
+
 
 ```{r, results='hide', message=FALSE}
 library(readr)
@@ -34,7 +36,9 @@ test   <- df[round(0.8*nrow(df)):nrow(df), ]
 
 ```
 
+
 ### calculate the weigths for every observation
+
 ```{r}
 
 weight <- function(t, tmin = min(train$`Month #`), tmax = max(train$`Month #`)) ((1 + t - tmin)/(1 + tmax - tmin))**2
@@ -43,7 +47,9 @@ train$weight <- weight(train$`Month #`)
 
 ```
 
+
 ### programm the algorithm functions
+
 ```{r}
 
 eta <- function(p, P) ((1 + 0.1*P) / (p + 0.1*P))**0.602
@@ -67,7 +73,9 @@ Rj <- function(rj, eta, w, o_hut, o, lambda, alpha_j, Nj){
 RMSE <- function(o, o_hut) sqrt( 1/length(o) * sum((o_hut - o)**2, na.rm = TRUE))
 ```
 
+
 ### create the ratings dictionary
+
 ```{r}
 
 all.teams <- levels(as.factor(union(levels(as.factor(df$`White Player #`)),
@@ -89,7 +97,9 @@ ratings$neighbor_average <- 0
 rmse <- c(0)
 ```
 
+
 ### the main loop for the model fit
+
 ```{r, eval=FALSE}
 
 for (p in 1:P){  
@@ -149,7 +159,9 @@ for (p in 1:P){
 }
 ```
 
+
 ### results on test set
+
 ```{r}
 
 test$elo  <-  1 / (1 + exp(ratings[test$`Black Player #`,]$rating - ratings[test$`White Player #`,]$rating - g))
